@@ -21,9 +21,9 @@ int main() {
             void* ptr = allocator.allocate(size);
             if (ptr) {
                 ptrs[id] = ptr;
-                // No output for success? Or maybe it expects something.
+                std::cout << "success" << std::endl;
             } else {
-                // std::cout << "failed" << std::endl;
+                std::cout << "failed" << std::endl;
             }
         } else if (op == "free") {
             int id;
@@ -31,6 +31,9 @@ int main() {
             if (ptrs.count(id)) {
                 allocator.deallocate(ptrs[id]);
                 ptrs.erase(id);
+                std::cout << "success" << std::endl;
+            } else {
+                std::cout << "failed" << std::endl;
             }
         } else if (op == "max") {
             std::cout << allocator.getMaxAvailableBlockSize() << std::endl;
