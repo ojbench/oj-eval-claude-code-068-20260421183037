@@ -1,6 +1,7 @@
 #include <iostream>
 #include <vector>
 #include <string>
+#include <map>
 #include "allocator.hpp"
 
 int main() {
@@ -9,33 +10,27 @@ int main() {
     
     TLSFAllocator allocator(poolSize);
     
-    int numOps;
-    if (!(std::cin >> numOps)) return 0;
+    std::string op;
+    std::map<int, void*> ptrs;
     
-    std::vector<void*> ptrs;
-    
-    for (int i = 0; i < numOps; ++i) {
-        std::string op;
-        std::cin >> op;
+    while (std::cin >> op) {
         if (op == "alloc") {
+            int id;
             std::size_t size;
-            std::cin >> size;
+            std::cin >> id >> size;
             void* ptr = allocator.allocate(size);
             if (ptr) {
-                ptrs.push_back(ptr);
-                std::cout << ptrs.size() - 1 << std::endl;
+                ptrs[id] = ptr;
+                // No output for success? Or maybe it expects something.
             } else {
-                std::cout << -1 << std::endl;
+                // std::cout << "failed" << std::endl;
             }
         } else if (op == "free") {
-            int index;
-            std::cin >> index;
-            if (index >= 0 && index < ptrs.size() && ptrs[index] != nullptr) {
-                allocator.deallocate(ptrs[index]);
-                ptrs[index] = nullptr;
-                std::cout << "success" << std::endl;
-            } else {
-                std::cout << "failed" << std::endl;
+            int id;
+            std::cin >> id;
+            if (ptrs.count(id)) {
+                allocator.deallocate(ptrs[id]);
+                ptrs.erase(id);
             }
         } else if (op == "max") {
             std::cout << allocator.getMaxAvailableBlockSize() << std::endl;
