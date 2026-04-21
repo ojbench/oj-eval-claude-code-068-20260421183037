@@ -43,12 +43,11 @@ private:
     
     // memoryPool 被分割成多个块，每个块都有一个BlockHeader结构体储存相关信息
     struct BlockHeader {
+        void* data; // 指向数据块头地址的指针
         std::size_t size; // 块大小（包含头部）
         bool isFree;      // 是否空闲
         BlockHeader* prevPhysBlock; // 指向物理上前一个块
         BlockHeader* nextPhysBlock; // 指向物理上后一个块
-
-        void* data() { return reinterpret_cast<void*>(this + 1); }
     };
     
     // 空闲块结构体继承自 BlockHeader

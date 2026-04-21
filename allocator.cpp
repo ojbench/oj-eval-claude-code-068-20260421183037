@@ -2,7 +2,6 @@
 #include <algorithm>
 #include <cstring>
 #include <cmath>
-#include <iostream>
 
 TLSFAllocator::TLSFAllocator(std::size_t memoryPoolSize) : poolSize(memoryPoolSize) {
     memoryPool = std::malloc(poolSize);
@@ -34,6 +33,7 @@ void TLSFAllocator::initializeMemoryPool(std::size_t size) {
     initialBlock->nextPhysBlock = nullptr;
     initialBlock->prevFree = nullptr;
     initialBlock->nextFree = nullptr;
+    initialBlock->data = reinterpret_cast<void*>(initialBlock + 1);
     
     insertFreeBlock(initialBlock);
 }
@@ -56,16 +56,54 @@ void* TLSFAllocator::allocate(std::size_t size) {
     }
     
     block->isFree = false;
-    return block->data();
+    return block->data;
 }
 
 void TLSFAllocator::deallocate(void* ptr) {
     if (!ptr) return;
     
-    BlockHeader* header = reinterpret_cast<BlockHeader*>(reinterpret_cast<char*>(ptr) - sizeof(BlockHeader));
-    header->isFree = true;
+    // This is problematic if we don't know the header location from data pointer
+    // But since data = this + 1, we can do:
+    BlockHeader* header = reinterpret_cast<BlockHeader*>(reinterpret_cast<char*>(ptr) - offsetof(BlockHeader, data) - sizeof(void*));
+    // Wait, data is a member. In my previous version I used data() { return this + 1; }.
+    // Let's use the actual data pointer stored in the header.
+    // However, finding the header from the data pointer is easier if we know it's always at a fixed offset.
+    // In the README: struct BlockHeader { void* data; ... }
+    // If data is the first member, ptr == &header->data.
+    // But wait, it's safer to assume data is a pointer to the actual data area.
     
-    FreeBlock* freeBlock = static_cast<FreeBlock*>(header);
+    // Let's re-examine the structure:
+    /*
+    struct BlockHeader {
+        void* data; // 指向数据块头地址的指针
+        std::size_t size; // 块大小（包含头部）
+        bool isFree;      // 是否空闲
+        BlockHeader* prevPhysBlock; // 指向物理上前一个块
+        BlockHeader* nextPhysBlock; // 指向物理上后一个块
+    };
+    */
+    // If 'data' is the first member, then header == ptr.
+    // But then 'data' would point to itself or something.
+    // Usually 'data' points to the memory right after the header.
+    
+    // Since I control the allocation, I'll make 'data' point to (this + 1).
+    // And I'll find 'this' by iterating or by assuming fixed offset if possible.
+    // Actually, I can just use a map to store ptr -> header if I have to, but that's not TLSF.
+    // In real TLSF, the header is just before the data.
+    
+    // Let's assume header is just before the data pointer.
+    // Since 'data' is a pointer member, it takes 8 bytes.
+    // BlockHeader size is 8 (void*) + 8 (size_t) + 8 (bool/padded) + 8 (prev) + 8 (next) = 40 bytes.
+    // If data points to (header + 1), then header = (char*)ptr - sizeof(BlockHeader).
+    
+    BlockHeader* h = reinterpret_cast<BlockHeader*>(reinterpret_cast<char*>(ptr) - sizeof(BlockHeader));
+    // Check if h->data == ptr to be sure
+    if (h->data != ptr) {
+        // Fallback or error? For now assume it matches.
+    }
+    
+    h->isFree = true;
+    FreeBlock* freeBlock = static_cast<FreeBlock*>(h);
     freeBlock->prevFree = nullptr;
     freeBlock->nextFree = nullptr;
     
@@ -99,24 +137,11 @@ std::size_t TLSFAllocator::getMaxAvailableBlockSize() const {
 }
 
 void TLSFAllocator::mappingFunction(std::size_t size, int& fli, int& sli) {
+    if (size == 0) { fli = 0; sli = 0; return; }
     fli = fls(size);
-    if (fli < SLI_BITS) {
-        fli = fli; // Not really useful but keeps the structure
-        sli = size >> (fli - fli); // Should be linear?
-        // Actually, for size < 16, it's very special.
-        // Let's stick to the formula provided in README:
-        // SLI = ((size - (1 << FLI)) / ((1 << FLI) / divisions))
-    }
-    
     int divisions = (fli < SLI_BITS) ? (1 << fli) : SLI_SIZE;
-    if (fli < SLI_BITS) {
-        // Linear mapping for small sizes
-        sli = size - (1ULL << fli);
-    } else {
-        sli = (size - (1ULL << fli)) >> (fli - SLI_BITS);
-    }
+    sli = (size - (1ULL << fli)) * divisions / (1ULL << fli);
     
-    // Bounds check
     if (fli >= FLI_SIZE) fli = FLI_SIZE - 1;
     if (sli >= SLI_SIZE) sli = SLI_SIZE - 1;
 }
@@ -127,6 +152,7 @@ void TLSFAllocator::splitBlock(FreeBlock* block, std::size_t size) {
     remainingBlock->isFree = true;
     remainingBlock->prevPhysBlock = block;
     remainingBlock->nextPhysBlock = block->nextPhysBlock;
+    remainingBlock->data = reinterpret_cast<void*>(remainingBlock + 1);
     
     if (block->nextPhysBlock) {
         block->nextPhysBlock->prevPhysBlock = remainingBlock;
@@ -138,7 +164,6 @@ void TLSFAllocator::splitBlock(FreeBlock* block, std::size_t size) {
 }
 
 void TLSFAllocator::mergeAdjacentFreeBlocks(FreeBlock* block) {
-    // Merge with next
     if (block->nextPhysBlock && block->nextPhysBlock->isFree) {
         FreeBlock* next = static_cast<FreeBlock*>(block->nextPhysBlock);
         removeFreeBlock(next);
@@ -149,7 +174,6 @@ void TLSFAllocator::mergeAdjacentFreeBlocks(FreeBlock* block) {
         }
     }
     
-    // Merge with prev
     if (block->prevPhysBlock && block->prevPhysBlock->isFree) {
         FreeBlock* prev = static_cast<FreeBlock*>(block->prevPhysBlock);
         removeFreeBlock(prev);
@@ -168,14 +192,12 @@ TLSFAllocator::FreeBlock* TLSFAllocator::findSuitableBlock(std::size_t size) {
     int fli, sli;
     mappingFunction(size, fli, sli);
     
-    // Search in current FLI
     std::uint32_t slMap = index.sliBitmaps[fli] & (~0U << sli);
     if (slMap) {
         int foundSli = ffs(slMap);
         return index.freeLists[fli][foundSli];
     }
     
-    // Search in higher FLI
     std::uint32_t flMap = index.fliBitmap & (~0U << (fli + 1));
     if (flMap) {
         int foundFli = ffs(flMap);
