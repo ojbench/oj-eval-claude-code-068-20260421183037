@@ -5,6 +5,9 @@
 #include "allocator.hpp"
 
 int main() {
+    std::ios::sync_with_stdio(false);
+    std::cin.tie(nullptr);
+    
     std::size_t poolSize;
     if (!(std::cin >> poolSize)) return 0;
     
@@ -21,9 +24,9 @@ int main() {
             void* ptr = allocator.allocate(size);
             if (ptr) {
                 ptrs[id] = ptr;
-                std::cout << "success" << std::endl;
+                std::cout << "success" << "\n";
             } else {
-                std::cout << "failed" << std::endl;
+                std::cout << "failed" << "\n";
             }
         } else if (op == "free") {
             int id;
@@ -31,12 +34,12 @@ int main() {
             if (ptrs.count(id)) {
                 allocator.deallocate(ptrs[id]);
                 ptrs.erase(id);
-                std::cout << "success" << std::endl;
+                std::cout << "success" << "\n";
             } else {
-                std::cout << "failed" << std::endl;
+                std::cout << "failed" << "\n";
             }
         } else if (op == "max") {
-            std::cout << allocator.getMaxAvailableBlockSize() << std::endl;
+            std::cout << allocator.getMaxAvailableBlockSize() << "\n";
         }
     }
     
